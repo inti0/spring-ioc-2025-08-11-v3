@@ -25,10 +25,13 @@ public class Ut {
     }
 
     public static class topologicalSort {
-        /** 위상 정렬로 빈 이름을 정렬한다.
-         * @param edges = ["testRepository testService", ...]
-         *              (B가 A에 의존하는, A가 있어야 B를 생성할 수 있는 형태로 제시된다.)
-         * @return 의존성이 작은 bean 이름부터 반환된다.
+        /**
+         * 주어진 문자열 목록을 위상 정렬한다.
+         * @param edges 의존 관계를 나타내는 문자열 리스트.
+         *              각 문자열은 "testRepository testService", "A B" 형식이며, 띄어쓰기를 구분자로 한다.
+         *              "A B"는 "B가 A에 의존한다"는 뜻으로,
+         *              B를 생성하기 전에 A가 먼저 존재해야 함을 의미한다.
+         * @return 의존성이 적은 노드부터 순서대로 정렬된 결과
          */
         public static Queue<String> sort(List<String> edges) {
             Map<String, List<String>> adjacencyLists = drawAdjacencyLists(edges);
@@ -61,8 +64,8 @@ public class Ut {
 
             for (String edge : edges) {
                 String[] split = edge.split(" ");
-                String startNode = split[0]; //의존이 필요한 객체, 나중에 생성 되어야 한다
-                String endNode = split[1];   //의존성을 제공하는 객체, 먼저 생성 되어야 한다
+                String startNode = split[0];
+                String endNode = split[1];
                 adjacencyLists.putIfAbsent(startNode, new ArrayList<>());
 
                 adjacencyLists.get(startNode).add(endNode);

@@ -20,36 +20,38 @@ public class ApplicationContext {
     private final Map<String, beanCreateStrategy> beanNameStrategyMap = new HashMap<>();
     private final List<String> beanGraph = new ArrayList<>();
 
+    // 빈을 생성자 혹은 메소드로 생성하는 클래스
+    // 사용하지 않는 쪽은 null로 받는다
     private class beanCreateStrategy {
-        Constructor<?> constructorStrategy;
-        Method methodStrategy;
+        Constructor<?> constructor;
+        Method method;
 
-        public beanCreateStrategy(Constructor<?> constructorStrategy, Method methodStrategy) {
-            this.constructorStrategy = constructorStrategy;
-            this.methodStrategy = methodStrategy;
+        public beanCreateStrategy(Constructor<?> constructor, Method method) {
+            this.constructor = constructor;
+            this.method = method;
         }
 
         Object registerBean() throws InvocationTargetException, InstantiationException, IllegalAccessException {
-            if (constructorStrategy != null) {
-                Class<?>[] parameterTypes = constructorStrategy.getParameterTypes();
+            if (constructor != null) {
+                Class<?>[] parameterTypes = constructor.getParameterTypes();
                 Object[] parameterInstance = new Object[parameterTypes.length];
                 for (int i = 0; i < parameterTypes.length; i++) {
                     Class<?> parameterType = parameterTypes[i];
                     String beanName = findBeanNameForType(parameterType);
                     parameterInstance[i] = beans.get(beanName);
                 }
-                return constructorStrategy.newInstance(parameterInstance);
+                return constructor.newInstance(parameterInstance);
             }
-            if (methodStrategy != null) {
-                Class<?>[] parameterTypes = methodStrategy.getParameterTypes();
+            if (method != null) {
+                Class<?>[] parameterTypes = method.getParameterTypes();
                 Object[] parameterInstance = new Object[parameterTypes.length];
                 for (int i = 0; i < parameterTypes.length; i++) {
                     Class<?> parameterType = parameterTypes[i];
                     String beanName = findBeanNameForType(parameterType);
                     parameterInstance[i] = beans.get(beanName);
                 }
-                Object declaredObject = beans.get(getBeanName(methodStrategy.getDeclaringClass()));
-                return methodStrategy.invoke(declaredObject, parameterInstance);
+                Object declaredObject = beans.get(getBeanName(method.getDeclaringClass()));
+                return method.invoke(declaredObject, parameterInstance);
             }
             return null;
         }
@@ -58,19 +60,19 @@ public class ApplicationContext {
     public ApplicationContext(String basePackage) {
         try {
             scanWithAnnotation(basePackage);
-            Queue<String> sortedBeenNames = topologicalSort.sort(beanGraph);
-            if (sortedBeenNames.size() < beanNameStrategyMap.size()) {
-                throw new RuntimeException("순환 참조 감지");
-            }
-            System.out.println("의존성 그래프: " + beanGraph);
-            System.out.println("Bean 생성 순서: " + sortedBeenNames);
+            Queue<String> sortedBeanNames = sortBeanByDependency();
 
-            while (!sortedBeenNames.isEmpty()) {
-                String beanName = sortedBeenNames.poll();
+            System.out.println("의존성 그래프: " + beanGraph);
+            System.out.println("Bean 생성 순서: " + sortedBeanNames);
+
+            while (!sortedBeanNames.isEmpty()) {
+                String beanName = sortedBeanNames.poll();
                 System.out.println("생성 중인 Bean: " + beanName);
+
                 beanCreateStrategy beanCreateStrategy = beanNameStrategyMap.get(beanName);
                 Object instance = beanCreateStrategy.registerBean();
                 System.out.println("생성 완료: " + beanName + " -> " + instance);
+
                 beans.put(beanName, instance);
             }
         } catch (InvocationTargetException | InstantiationException | IllegalAccessException |
@@ -79,6 +81,7 @@ public class ApplicationContext {
         }
     }
 
+    // 빈 등록 대상을 어노테이션을 통해 찾는다
     private void scanWithAnnotation(String basePackage) throws NoSuchMethodException {
         Reflections reflections = new Reflections(basePackage);
         Set<Class<?>> scannedClass = reflections.getTypesAnnotatedWith(Component.class);
@@ -91,7 +94,17 @@ public class ApplicationContext {
         }
     }
 
-    // @Component 클래스 : 빈 이름 - 빈생성 전략 맵,의존성 탐색 그래프 등록
+    // 의존성 관계에 따라 beanName을 정렬하여 반환
+    private Queue<String> sortBeanByDependency() {
+        Queue<String> sortedBeanNames = topologicalSort.sort(beanGraph);
+        if (sortedBeanNames.size() < beanNameStrategyMap.size()) {
+            throw new RuntimeException("순환 참조 감지");
+        }
+        return sortedBeanNames;
+    }
+
+    // @Component이 선언된 클래스를 beanNameStrategyMap 에 생성자와 함께 등록하고,
+    // beanGraph에 의존성 관계 등록
     private void scanComponentTagged(Class<?> clazz) {
         String beanName = getBeanName(clazz);
         Constructor<?> targetConstructor = getTargetConstructor(clazz);
@@ -103,7 +116,8 @@ public class ApplicationContext {
         }
     }
 
-    // @Bean 메소드 : 빈 이름 - 빈생성 전략 맵,의존성 탐색 그래프 등록
+    // @Bean이 선언된 메소드를 beanNameStrategyMap 에 메소드와 함께 등록하고,
+    // beanGraph에 의존성 관계 등록
     private void scanBeanTagged(Method method) {
         if (!method.isAnnotationPresent(Bean.class)) {
             return;
@@ -132,7 +146,7 @@ public class ApplicationContext {
         // 1. @Bean 메소드 중에서 해당 타입을 반환하는 메소드 찾기
         for (Map.Entry<String, beanCreateStrategy> entry : beanNameStrategyMap.entrySet()) {
             beanCreateStrategy target = entry.getValue();
-            if (target.methodStrategy != null && target.methodStrategy.getReturnType().equals(type)) {
+            if (target.method != null && target.method.getReturnType().equals(type)) {
                 return entry.getKey(); // 메소드 이름 반환
             }
         }
@@ -146,14 +160,8 @@ public class ApplicationContext {
         Constructor<?>[] declaredConstructors = clazz.getDeclaredConstructors();
         if (declaredConstructors.length == 1) {
             return declaredConstructors[0];
-//        } else {
-//            for (Constructor<?> constructor : declaredConstructors) {
-//                if (constructor.isAnnotationPresent(AutoWired.class)) {
-//                    return constructor;
-//                }
-//            }
+            throw new RuntimeException("생성자가 없거나 2개 이상 : " + clazz.getName());
         }
-        throw new RuntimeException("생성자가 2개 이상 : " + clazz.getName());
     }
 
 
