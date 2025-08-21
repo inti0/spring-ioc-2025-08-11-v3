@@ -60,9 +60,9 @@ public class ApplicationContext {
     public ApplicationContext(String basePackage) {
         try {
             scanWithAnnotation(basePackage);
-            Queue<String> sortedBeanNames = sortBeanByDependency();
-
             System.out.println("의존성 그래프: " + beanGraph);
+
+            Queue<String> sortedBeanNames = sortBeanByDependency();
             System.out.println("Bean 생성 순서: " + sortedBeanNames);
 
             while (!sortedBeanNames.isEmpty()) {
@@ -86,12 +86,59 @@ public class ApplicationContext {
         Reflections reflections = new Reflections(basePackage);
         Set<Class<?>> scannedClass = reflections.getTypesAnnotatedWith(Component.class);
         scannedClass.removeIf(Class::isAnnotation);
+
         for (Class<?> clazz : scannedClass) {
-            scanComponentTagged(clazz);
+            registerStrategyMapComponent(clazz);
             for (Method method : clazz.getDeclaredMethods()) {
-                scanBeanTagged(method);
+                registerStrategyMapBean(method);
             }
         }
+
+        for (Class<?> clazz : scannedClass) {
+            registerBeanGraphComponent(clazz);
+            for (Method method : clazz.getDeclaredMethods()) {
+                registerBeanGraphBean(method);
+            }
+        }
+    }
+
+    // @Component이 선언된 클래스를 beanNameStrategyMap 에 생성자와 함께 등록
+    private void registerStrategyMapComponent(Class<?> clazz) {
+        String beanName = getBeanName(clazz);
+        Constructor<?> targetConstructor = getTargetConstructor(clazz);
+        beanNameStrategyMap.put(beanName, new beanCreateStrategy(targetConstructor, null));
+    }
+
+    // @Bean이 선언된 메소드를 beanNameStrategyMap 에 메소드와 함께 등록
+    private void registerStrategyMapBean(Method method) {
+        if (!method.isAnnotationPresent(Bean.class)) {
+            return;
+        }
+        String methodName = method.getName();
+        beanNameStrategyMap.put(methodName, new beanCreateStrategy(null, method));
+    }
+
+    private void registerBeanGraphComponent(Class<?> clazz) {
+        Constructor<?> targetConstructor = getTargetConstructor(clazz);
+        String beanName = getBeanName(clazz);
+
+        Class<?>[] parameterTypes = targetConstructor.getParameterTypes();
+        for (Class<?> parameterType : parameterTypes) {
+            String node = findBeanNameForType(parameterType) + " " + beanName;
+            beanGraph.add(node);
+        }
+    }
+
+    private void registerBeanGraphBean(Method method) {
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        String methodName = method.getName();
+
+        for (Class<?> parameterType : parameterTypes) {
+            String node = findBeanNameForType(parameterType) + " " + methodName;
+            beanGraph.add(node);
+        }
+        String declaredClassNode = findBeanNameForType(method.getDeclaringClass()) + " " + methodName;
+        beanGraph.add(declaredClassNode);
     }
 
     // 의존성 관계에 따라 beanName을 정렬하여 반환
@@ -101,38 +148,6 @@ public class ApplicationContext {
             throw new RuntimeException("순환 참조 감지");
         }
         return sortedBeanNames;
-    }
-
-    // @Component이 선언된 클래스를 beanNameStrategyMap 에 생성자와 함께 등록하고,
-    // beanGraph에 의존성 관계 등록
-    private void scanComponentTagged(Class<?> clazz) {
-        String beanName = getBeanName(clazz);
-        Constructor<?> targetConstructor = getTargetConstructor(clazz);
-        beanNameStrategyMap.put(beanName, new beanCreateStrategy(targetConstructor, null));
-        Class<?>[] parameterTypes = targetConstructor.getParameterTypes();
-        for (Class<?> parameterType : parameterTypes) {
-            String node = getBeanName(parameterType) + " " + beanName;
-            beanGraph.add(node);
-        }
-    }
-
-    // @Bean이 선언된 메소드를 beanNameStrategyMap 에 메소드와 함께 등록하고,
-    // beanGraph에 의존성 관계 등록
-    private void scanBeanTagged(Method method) {
-        if (!method.isAnnotationPresent(Bean.class)) {
-            return;
-        }
-
-        String methodName = method.getName();
-        beanNameStrategyMap.put(methodName, new beanCreateStrategy(null, method));
-
-        Class<?>[] parameterTypes = method.getParameterTypes();
-        for (Class<?> parameterType : parameterTypes) {
-            String node = findBeanNameForType(parameterType) + " " + methodName;
-            beanGraph.add(node);
-        }
-        String declaredClassNode = getBeanName(method.getDeclaringClass()) + " " + methodName;
-        beanGraph.add(declaredClassNode);
     }
 
     // 생성자 주입의 bean 이름은 클래스명에서 첫 글자를 소문자로 변환하여 사용한다
@@ -160,8 +175,8 @@ public class ApplicationContext {
         Constructor<?>[] declaredConstructors = clazz.getDeclaredConstructors();
         if (declaredConstructors.length == 1) {
             return declaredConstructors[0];
-            throw new RuntimeException("생성자가 없거나 2개 이상 : " + clazz.getName());
         }
+        throw new RuntimeException("생성자가 없거나 2개 이상 : " + clazz.getName());
     }
 
 
